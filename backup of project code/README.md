@@ -95,14 +95,14 @@ link to install ffmpeg: https://youtu.be/DMEP82yrs5g?si=QVmU0kQjT-w8_FLd
 Open a new terminal or command prompt and type:
 bash
 
-Copy code
+Copy code:
 ffmpeg -version
 
 If installed correctly, this will display the FFmpeg version and configuration details.
-3. Run FFmpeg Commands
+2. Run FFmpeg Commands
 After completing the setup, you can run FFmpeg commands from the command line without any issues. For example:
 bash
 
-Copy code
+Copy code:
 ffmpeg -i input.mp4 -c:v libx264 output.mp4
 
