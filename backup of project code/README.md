@@ -99,6 +99,7 @@ Copy code:
 ffmpeg -version
 
 If installed correctly, this will display the FFmpeg version and configuration details.
+
 2. Run FFmpeg Commands
 After completing the setup, you can run FFmpeg commands from the command line without any issues. For example:
 bash
