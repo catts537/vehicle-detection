@@ -1,14 +1,18 @@
-#this code works as single box detection detection with centre representation using Haar Cascade model
 import cv2
 import numpy as np
+from ultralytics import YOLO  # Import YOLOv8 from the Ultralytics library
 
-# Load the Haar Cascade classifier for car detection
-haarcascade_cars = cv2.CascadeClassifier('cars.xml')
+# Load YOLOv8 model
+model_path = "yolov8n.pt"  # Replace with the path to your YOLOv8 model (e.g., yolov8n, yolov8s, etc.)
+model = YOLO(model_path)
 
-# Replace 'your_video.mp4' with the actual path to your video file
-video_path = '3727445-hd_1920_1080_30fps.mp4'
+# Load the COCO class names (auto-loaded by YOLOv8, but you can customize this if needed)
+classes = model.names
 
-# Open the video file
+# Replace with your video file path
+video_path = "3727445-hd_1920_1080_30fps.mp4"
+
+# Open video file
 cap = cv2.VideoCapture(video_path)
 if not cap.isOpened():
     print("Error: Could not open video.")
@@ -19,65 +23,75 @@ total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 fps = int(cap.get(cv2.CAP_PROP_FPS))
 
 # Create a resizable window
-cv2.namedWindow('Vehicle Detection', cv2.WINDOW_NORMAL)
+cv2.namedWindow("Vehicle Detection", cv2.WINDOW_NORMAL)
 
-# Variables to manage playback
+# Variables for playback
 current_frame = 0
-speed = 1  # Playback speed factor
+speed = 1
 paused = False
 
-# Variables for adjustable points
-point1 = (100, 100)  # Initial coordinates for point 1
-point2 = (300, 300)  # Initial coordinates for point 2
-point_radius = 5  # Radius for points
+# Variables for adjustable points (line for crossing detection)
+point1 = (100, 100)
+point2 = (300, 300)
+point_radius = 5
 dragging_point1 = False
 dragging_point2 = False
 
-# Variables for vehicle counting
+# Vehicle counting variables
 vehicle_count = 0
-tracked_vehicles = set()  # To track unique vehicles
+tracked_vehicles = {}  # {vehicle_id: (x, y, w, h, crossed, label)}
+vehicle_id_counter = 0
 
-# Mouse callback function
+# Mouse callback function to drag points
 def mouse_callback(event, x, y, flags, param):
     global point1, point2, dragging_point1, dragging_point2
-
-    # Check if a point is being dragged
     if event == cv2.EVENT_LBUTTONDOWN:
-        # Check if the mouse is near point1
-        if (x - point1[0]) ** 2 + (y - point1[1]) ** 2 < point_radius ** 2:
+        if (x - point1[0]) ** 2 + (y - point1[1]) ** 2 < point_radius**2:
             dragging_point1 = True
-        # Check if the mouse is near point2
-        elif (x - point2[0]) ** 2 + (y - point2[1]) ** 2 < point_radius ** 2:
+        elif (x - point2[0]) ** 2 + (y - point2[1]) ** 2 < point_radius**2:
             dragging_point2 = True
-
     elif event == cv2.EVENT_MOUSEMOVE:
-        # Update point1 if it is being dragged
         if dragging_point1:
             point1 = (x, y)
-        # Update point2 if it is being dragged
         elif dragging_point2:
             point2 = (x, y)
-
     elif event == cv2.EVENT_LBUTTONUP:
-        # Stop dragging when the mouse button is released
         dragging_point1 = False
         dragging_point2 = False
 
-# Set the mouse callback for the window
-cv2.setMouseCallback('Vehicle Detection', mouse_callback)
 
-# Trackbar callback to update current frame
+cv2.setMouseCallback("Vehicle Detection", mouse_callback)
+
+
+# Trackbar callback for seeking
 def on_trackbar(val):
     global current_frame
     current_frame = val
     cap.set(cv2.CAP_PROP_POS_FRAMES, current_frame)
 
-# Create a trackbar for video seeking
-cv2.createTrackbar('Seek', 'Vehicle Detection', 0, total_frames - 1, on_trackbar)
+
+cv2.createTrackbar("Seek", "Vehicle Detection", 0, total_frames - 1, on_trackbar)
+
+
+# Function to check if a vehicle crosses the line
+def is_crossing_line(center, prev_center):
+    """Check if a vehicle crosses the line between point1 and point2."""
+    if min(point1[1], point2[1]) < center[1] < max(point1[1], point2[1]) and min(
+        point1[0], point2[0]
+    ) < center[0] < max(point1[0], point2[0]):
+        if prev_center is not None:
+            return (
+                prev_center[1] < min(point1[1], point2[1])
+                and center[1] >= min(point1[1], point2[1])
+            ) or (
+                prev_center[1] > max(point1[1], point2[1])
+                and center[1] <= max(point1[1], point2[1])
+            )
+    return False
+
 
 while True:
     if not paused:
-        # Set the current frame position
         cap.set(cv2.CAP_PROP_POS_FRAMES, current_frame)
         ret, frame = cap.read()
 
@@ -85,81 +99,130 @@ while True:
             print("End of video reached.")
             break
 
-        # Convert the frame to grayscale for vehicle detection
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        # Run YOLOv8 inference
+        results = model(frame)
 
-        # Detect cars in the grayscale frame
-        cars = haarcascade_cars.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5)
+        # Extract bounding boxes, confidences, and class IDs
+        detections = results[0].boxes  # YOLOv8 stores detection boxes in `results[0].boxes`
 
-        # Loop over detected cars
-        for (x, y, w, h) in cars:
-            vehicle_center = (x + w // 2, y + h // 2)
+        boxes = []
+        confidences = []
+        class_ids = []
 
-            # Draw rectangles around detected cars
-            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-            cv2.circle(frame,(vehicle_center),6,(0,0,225),-1)
+        for detection in detections:
+            x1, y1, x2, y2 = detection.xyxy[0].tolist()  # Bounding box coordinates
+            confidence = detection.conf[0]  # Confidence score
+            class_id = int(detection.cls[0])  # Class ID
 
-            #line formula
-            line=(point2[1]-point1[1])//(point2[0]-point1[0])
+            label = classes[class_id]
+            if label in ["car", "truck", "bus", "motorcycle"]:  # Focus on vehicles
+                boxes.append([int(x1), int(y1), int(x2 - x1), int(y2 - y1)])
+                confidences.append(float(confidence))
+                class_ids.append(class_id)
 
-            
+        current_detections = []
+        for i, box in enumerate(boxes):
+            x, y, w, h = box
+            current_detections.append((x, y, w, h))
 
+        # Update tracked vehicles
+        updated_tracked_vehicles = {}
+        for i, (x, y, w, h) in enumerate(current_detections):
+            center = (x + w // 2, y + h // 2)
+            matched = False
 
-            # Check if the vehicle crosses the line
-            if (point1[0] <= vehicle_center[0] <= point2[0] or point2[0] <= vehicle_center[0] <= point1[0]):
-                if (point1[1] <= vehicle_center[1] <= point2[1] or point2[1] <= vehicle_center[1] <= point1[1]):
-                    tracked_vehicles.add((x, y, w, h))  # Track unique vehicles
-############################################################################################################################
-                    print(tracked_vehicles,"\n")
-                    if len(tracked_vehicles) > vehicle_count:
+            for vid, (vx, vy, vw, vh, crossed, vlabel) in tracked_vehicles.items():
+                prev_center = (vx + vw // 2, vy + vh // 2)
+                if (
+                    abs(center[0] - prev_center[0]) < 50
+                    and abs(center[1] - prev_center[1]) < 50
+                ):
+                    matched = True
+                    updated_tracked_vehicles[vid] = (x, y, w, h, crossed, vlabel)
+
+                    # Check for crossing
+                    if not crossed and is_crossing_line(center, prev_center):
+                        updated_tracked_vehicles[vid] = (x, y, w, h, True, vlabel)
                         vehicle_count += 1
+                    break
 
-        # Draw adjustable points
-        cv2.circle(frame, point1, point_radius, (0, 0, 255), -1)  # Point 1 (Red)
-        cv2.circle(frame, point2, point_radius, (255, 0, 0), -1)  # Point 2 (Blue)
+            if not matched:
+                vehicle_id_counter += 1
+                label = classes[class_ids[i]]  # Use the correct index `i` for the label
+                updated_tracked_vehicles[vehicle_id_counter] = (
+                    x,
+                    y,
+                    w,
+                    h,
+                    False,
+                    label,
+                )
 
-        # Draw a line connecting the two points
-        cv2.line(frame, point1, point2, (0, 255, 255), 2)  # Line (Yellow)
+        tracked_vehicles = updated_tracked_vehicles
+
+        # Draw bounding boxes and labels
+        for vid, (x, y, w, h, crossed, label) in tracked_vehicles.items():
+            color = (0, 255, 0) if crossed else (255, 0, 0)
+            cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
+            cv2.putText(
+                frame,
+                f"ID {label}",
+                (x, y - 10),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                color,
+                2,
+            )
+
+        # Draw the adjustable line
+        cv2.circle(frame, point1, point_radius, (0, 0, 255), -1)
+        cv2.circle(frame, point2, point_radius, (255, 0, 0), -1)
+        cv2.line(frame, point1, point2, (0, 255, 255), 2)
 
         # Display vehicle count
-        cv2.putText(frame, f"Vehicles Crossed: {vehicle_count}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX,
-                    1, (255, 255, 255), 2, cv2.LINE_AA)
+        cv2.putText(
+            frame,
+            f"Vehicles Crossed: {vehicle_count}",
+            (10, 60),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
 
-        # Display the current speed on the video
-        text = f"Speed: {speed}x"
-        cv2.putText(frame, text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX,
-                    1, (0, 255, 0), 2, cv2.LINE_AA)
+        # Playback speed
+        cv2.putText(
+            frame,
+            f"Speed: {speed}x",
+            (10, 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1,
+            (0, 255, 0),
+            2,
+            cv2.LINE_AA,
+        )
+        cv2.setTrackbarPos("Seek", "Vehicle Detection", current_frame)
 
-        # Update the trackbar position
-        cv2.setTrackbarPos('Seek', 'Vehicle Detection', current_frame)
-
-        # Show the video frame with detections
-        cv2.imshow('Vehicle Detection', frame)
-
-        # Update current frame based on speed
+        cv2.imshow("Vehicle Detection", frame)
         current_frame += speed
-
-        # Ensure current_frame does not exceed total_frames
         if current_frame >= total_frames:
             current_frame = total_frames - 1
 
-    # Handle key events
     key = cv2.waitKey(30) & 0xFF
-
-    if key == ord('q'):  # Quit
+    if key == ord("q"):
         break
-    elif key == ord('p'):  # Play/Pause
+    elif key == ord("p"):
         paused = not paused
-    elif key == ord('+'):  # Increase speed
-        speed = min(speed + 1, 5)  # Limit max speed to 5x
-    elif key == ord('-'):  # Decrease speed
-        speed = max(speed - 1, 1)  # Limit min speed to 1x
-    elif key == ord('r'):  # Restart video
+    elif key == ord("+"):
+        speed = min(speed + 1, 5)
+    elif key == ord("-"):
+        speed = max(speed - 1, 1)
+    elif key == ord("r"):
         current_frame = 0
-    elif key == ord('c'):  # Reset vehicle count
+    elif key == ord("c"):
         vehicle_count = 0
-        tracked_vehicles.clear()  # Clear the tracked vehicles
+        tracked_vehicles.clear()
 
-# Release resources and close windows
 cap.release()
 cv2.destroyAllWindows()
