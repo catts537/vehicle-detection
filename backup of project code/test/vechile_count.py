@@ -10,7 +10,7 @@ model = YOLO(model_path)
 classes = model.names
 
 # Replace with your video file path
-video_path = "3727445-hd_1920_1080_30fps.mp4"
+video_path = "output.mp4"
 
 # Open video file
 cap = cv2.VideoCapture(video_path)
@@ -73,21 +73,67 @@ def on_trackbar(val):
 cv2.createTrackbar("Seek", "Vehicle Detection", 0, total_frames - 1, on_trackbar)
 
 
-# Function to check if a vehicle crosses the line
 def is_crossing_line(center, prev_center):
-    """Check if a vehicle crosses the line between point1 and point2."""
-    if min(point1[1], point2[1]) < center[1] < max(point1[1], point2[1]) and min(
-        point1[0], point2[0]
-    ) < center[0] < max(point1[0], point2[0]):
-        if prev_center is not None:
+    """
+    Check if a vehicle crosses the line defined by point1 and point2.
+    Uses line intersection logic for accurate detection.
+    """
+    # Ensure there is a previous center to check the trajectory
+    if prev_center is None:
+        return False
+
+    # Line segment defined by the vehicle's trajectory
+    line_vehicle = (prev_center, center)
+
+    # Line segment defined by the crossing detection line
+    line_crossing = (point1, point2)
+
+    # Helper function to check orientation
+    def orientation(p, q, r):
+        """
+        Find the orientation of the triplet (p, q, r).
+        0 -> Collinear, 1 -> Clockwise, 2 -> Counterclockwise
+        """
+        val = (q[1] - p[1]) * (r[0] - q[0]) - (q[0] - p[0]) * (r[1] - q[1])
+        if val == 0:
+            return 0
+        return 1 if val > 0 else 2
+
+    # Helper function to check if two line segments intersect
+    def do_intersect(p1, q1, p2, q2):
+        """
+        Check if line segments (p1, q1) and (p2, q2) intersect.
+        """
+        o1 = orientation(p1, q1, p2)
+        o2 = orientation(p1, q1, q2)
+        o3 = orientation(p2, q2, p1)
+        o4 = orientation(p2, q2, q1)
+
+        # General case: segments intersect
+        if o1 != o2 and o3 != o4:
+            return True
+
+        # Special cases: segments are collinear and overlap
+        def on_segment(p, q, r):
             return (
-                prev_center[1] < min(point1[1], point2[1])
-                and center[1] >= min(point1[1], point2[1])
-            ) or (
-                prev_center[1] > max(point1[1], point2[1])
-                and center[1] <= max(point1[1], point2[1])
+                min(p[0], r[0]) <= q[0] <= max(p[0], r[0]) and
+                min(p[1], r[1]) <= q[1] <= max(p[1], r[1])
             )
-    return False
+
+        if o1 == 0 and on_segment(p1, p2, q1):
+            return True
+        if o2 == 0 and on_segment(p1, q2, q1):
+            return True
+        if o3 == 0 and on_segment(p2, p1, q2):
+            return True
+        if o4 == 0 and on_segment(p2, q1, q2):
+            return True
+
+        return False
+
+    # Check if the trajectory line intersects the crossing line
+    return do_intersect(line_vehicle[0], line_vehicle[1], line_crossing[0], line_crossing[1])
+
 
 
 while True:
